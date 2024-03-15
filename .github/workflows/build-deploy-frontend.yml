@@ -1,0 +1,84 @@
+name: Build and deploy frontend
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - src/frontend/**
+      - .github/workflows/build-deploy-frontend.yml
+
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./src/frontend
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up NodeJS 18
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - uses: pnpm/action-setup@v2
+        name: Install pnpm
+        with:
+          version: 8
+          run_install: false
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install 
+      
+      - name: File-download
+        run: pnpm install js-file-download --save
+        
+      - name: Build
+        run: pnpm run build
+
+      - name: Load secret
+        id: op-load-secret
+        uses: 1password/load-secrets-action@v1
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          SERVER_HOST: op://AWP/backend-general/server/dev-server-host
+          SERVER_USERNAME: op://AWP/backend-general/server/dev-server-username
+          SERVER_SSHKEY: op://AWP/rsa-development-server/private key
+
+      - name: Copy file via ssh
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USERNAME }}
+          key: ${{ env.SERVER_SSHKEY }}
+          source: "./src/frontend/dist/*"
+          target: "/var/www/midterm.somesandwich.rocks/html"
+          rm: true
+
+      - name: Remove all old file
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          script_stop: true
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USERNAME }}
+          key: ${{ env.SERVER_SSHKEY }}
+          script: |
+            # Move all file to root folder
+            mv /var/www/midterm.somesandwich.rocks/html/src/frontend/dist/* /var/www/midterm.somesandwich.rocks/html
+            rm -rf /var/www/midterm.somesandwich.rocks/html/src

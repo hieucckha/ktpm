@@ -1,0 +1,114 @@
+name: Build and deploy backend
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - src/backend/**
+      - .github/workflows/build-deploy-backend.yml
+
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  CONTAINER_NAME: ${{ github.event.repository.name }}-dev
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./src/backend
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Load secret
+        id: op-load-secret
+        uses: 1password/load-secrets-action@v1
+        with:
+          export-env: false
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          PAT_GITHUB_TOKEN: op://AWP/github-pat-publish-package/token
+
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v1
+
+      - name: Inject secret with 1Password
+        run: |
+          export OP_SERVICE_ACCOUNT_TOKEN=${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          rm ./SomeSandwich.FakeMentorus.Web/appsettings.json
+          APP_ENV=dev op inject -i ./SomeSandwich.FakeMentorus.Web/appsettings.json.template -o ./SomeSandwich.FakeMentorus.Web/appsettings.json
+
+      - name: Login to github package
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ steps.op-load-secret.outputs.PAT_GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ github.repository }}/dev
+          tags: |
+            latest
+            type=sha,enable=true,prefix=dev-,suffix=,format=short
+
+      - name: Build and push to github package
+        uses: docker/build-push-action@v4
+        with:
+          context: ./src/backend
+          file: ./src/backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Load secret
+        id: op-load-secret
+        uses: 1password/load-secrets-action@v1
+        with:
+          export-env: false
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          SERVER_HOST: op://AWP/backend-general/server/dev-server-host
+          SERVER_USERNAME: op://AWP/backend-general/server/dev-server-username
+          SERVER_SSHKEY: op://AWP/rsa-development-server/private key
+          PAT_GITHUB_TOKEN: op://AWP/github-pat-publish-package/token
+
+      - name: Deploy to digital ocean droplet via ssh action
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          script_stop: true
+          host: ${{ steps.op-load-secret.outputs.SERVER_HOST }}
+          username: ${{ steps.op-load-secret.outputs.SERVER_USERNAME }}
+          key: ${{ steps.op-load-secret.outputs.SERVER_SSHKEY }}
+          envs: ${{ steps.op-load-secret.outputs.PAT_GITHUB_TOKEN }}, ${{ github.actor }}, ${{ env.CONTAINER_NAME }}, ${{ env.REGISTRY }}, ${{ github.repository }}
+          script: |
+            # Login to Github Packages
+            echo ${{ steps.op-load-secret.outputs.PAT_GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Stop and remove the container if running
+            docker stop ${{ env.CONTAINER_NAME }} || true && docker rm ${{ env.CONTAINER_NAME }} || true
+            # Remove image
+            docker image rmi ${{ env.REGISTRY }}/${{ github.repository }}/dev:latest || true
+            # Run container
+            docker run -d \
+              --restart always \
+              --name ${{ env.CONTAINER_NAME }} \
+              --network=awp-network \
+              -p 6968:80 \
+              -p 6969:443 \
+              ${{ env.REGISTRY }}/${{ github.repository }}/dev:latest

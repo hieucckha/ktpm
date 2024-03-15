@@ -1,0 +1,34 @@
+{
+  "Logging": {
+    "Console": {
+      "FormatterOptions": {
+        "JsonWriterOptions": {
+          "Indented": false
+        }
+      }
+    }
+  },
+  "ConnectionStrings": {
+    "AppDatabase": "op://AWP/credentials/connection-strings/app-database"
+  },
+  "Authentication": {
+    "Google": {
+      "ClientId": "op://AWP/credentials/authentication/google-client-id"
+    }
+  },
+  "Application": {
+    "FrontendUrl": "op://AWP/credentials/application/frontend-url"
+  },
+  "Jwt": {
+    "SecretKey": "op://AWP/credentials/jwt/secret-key",
+    "Issuer": "op://AWP/credentials/jwt/issuer"
+  },
+  "Mail": {
+    "Host": "op://AWP/credentials/mail/host",
+    "Password": "op://AWP/credentials/mail/password",
+    "Username": "op://AWP/credentials/mail/username",
+    "Port": "op://AWP/credentials/mail/port",
+    "UseSsl": "op://AWP/credentials/mail/use-ssl",
+    "FromAddress": "op://AWP/credentials/mail/from-address"
+  }
+}
